@@ -128,14 +128,15 @@ def count_fails_in_json(data):
                 # e.g. { "FAILED": 1, "FAILED_WITH_WAIVER": 1, ... }
                 f = res.get("FAILED", 0)
                 fw = res.get("FAILED_WITH_WAIVER", 0)
-                total_failed += (f + fw)
+                total_failed += f
                 total_failed_with_waiver += fw
             elif isinstance(res, str):
                 # e.g. "FAILED (WITH WAIVER)"
                 if "FAILED" in res.upper() or "FAILURE" in res.upper() or "FAIL" in res.upper():
-                    total_failed += 1
                     if "(WITH WAIVER)" in res.upper():
                         total_failed_with_waiver += 1
+                    else:
+                        total_failed +=1
 
     # If we found zero subtests across the entire suite => treat that as a fail
     if not any_subtests_found:
@@ -317,17 +318,25 @@ def merge_json_files(json_files, output_file):
         # suite_key is e.g. "BSA", so we'll look up suite_key.lower() in test_cat_dict
         # data might be a list of test_suite dicts (like BSA suite).
         # If there's a match on "Test_suite" => "Test Suite", copy fields.
-        if suite_key.lower() in test_cat_dict:
+        # Determine lookup suite key for Standalone-style sub-suites
+        lookup_suite_key = suite_key.lower()
+        standalone_aliases = {
+            "dt_kselftest", "dt_validate", "ethtool_test",
+            "read_write_check_blk_devices", "psci", "capsule update"
+        }
+        if lookup_suite_key in standalone_aliases or lookup_suite_key.startswith("os_"):
+            lookup_suite_key = "standalone"
+
+        if lookup_suite_key in test_cat_dict:
             # Now use 'data_list' instead of 'data'
             if isinstance(data_list, list):
                 for ts_dict in data_list:
                     if not isinstance(ts_dict, dict):
                         continue
 
-                    # EXACT code as before for copying fields, reorder keys, etc.
-                    ts_name_merged = ts_dict.get("Test_suite", "").strip().lower()
-                    if ts_name_merged in test_cat_dict[suite_key.lower()]:
-                        row_vals = test_cat_dict[suite_key.lower()][ts_name_merged]
+                    ts_name_merged = (ts_dict.get("Test_suite") or ts_dict.get("Test_suite_name") or "").strip().lower()
+                    if ts_name_merged in test_cat_dict[lookup_suite_key]:
+                        row_vals = test_cat_dict[lookup_suite_key][ts_name_merged]
                         if "Waivable" in row_vals:
                             ts_dict["Waivable"] = row_vals["Waivable"]
                         if "SRS scope" in row_vals:
@@ -337,7 +346,9 @@ def merge_json_files(json_files, output_file):
 
                         desired_order = [
                             "Test_suite",
+                            "Test_suite_name",
                             "Test_suite_Description",
+                            "Test_suite_description",
                             "Waivable",
                             "SRS scope",
                             "Main Readiness Grouping",
@@ -408,8 +419,8 @@ def merge_json_files(json_files, output_file):
                     print(f"Suite: Mandatory  : {suite_name}: {acs_results_summary[label]}")
                 else:
                     print(f"Suite: Recommended: {suite_name}: {acs_results_summary[label]}")
-            elif f == fw:
-                acs_results_summary[label] = "Compliant with waivers"
+            elif f == 0 and fw > 0:
+                acs_results_summary[label] = f"Compliant with waivers: Waivers {fw}"
                 if requirement == "M":
                     print(f"Suite: Mandatory  : {suite_name}: {acs_results_summary[label]}")
                 else:
@@ -434,7 +445,7 @@ def merge_json_files(json_files, output_file):
             fw = info["Failed_with_Waiver"]
             if (f + fw) == 0:
                 acs_results_summary[label] = "Compliant"
-            elif f == fw:
+            elif f == 0 and fw > 0:
                 acs_results_summary[label] = "Compliant with waivers"
             else:
                 acs_results_summary[label] = "Not compliant"
